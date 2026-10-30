@@ -26,6 +26,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { useStore } from '../store';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -73,6 +74,7 @@ const MOCK_IMAGES: ImageData[] = [
 ];
 
 export default function DataProcessing({ activeSubTab }: DataProcessingProps) {
+  const { notify } = useStore();
   const [view, setView] = useState<ViewState>('list');
   const [images, setImages] = useState<ImageData[]>(MOCK_IMAGES);
   const [previewImage, setPreviewImage] = useState<ImageData | null>(null);
@@ -571,8 +573,12 @@ export default function DataProcessing({ activeSubTab }: DataProcessingProps) {
         </div>
         <button 
           onClick={() => {
+            // 真实应用重命名：改写图片列表中的名称（成功项才改名）
+            const map = new Map(previewResults.filter(r => r.status === 'success').map(r => [r.originalName, r.newName]));
+            setImages(prev => prev.map(img => map.has(img.name) ? { ...img, name: map.get(img.name)! } : img));
             setResults(previewResults);
             setView('result');
+            notify(`批量命名已执行：${map.size} 个文件成功重命名，列表已同步更新`, 'success');
           }}
           className="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 shadow-lg shadow-blue-500/20 transition-all"
         >

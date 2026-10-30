@@ -15,6 +15,7 @@ import DataProcessing from './components/DataProcessing';
 import ResultVerification from './components/ResultVerification';
 import SystemManagement from './components/SystemManagement';
 import { NAV_ITEMS } from './constants';
+import { StoreProvider, Toasts } from './store';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('workbench');
@@ -36,7 +37,7 @@ export default function App() {
     }
 
     if (activeTab === 'evaluation') {
-      return <EvaluationManagement activeSubTab={activeSubTab} />;
+      return <EvaluationManagement activeSubTab={activeSubTab} navigate={navigate} />;
     }
 
     if (activeTab === 'annotation') {
@@ -44,11 +45,11 @@ export default function App() {
     }
 
     if (activeTab === 'interface') {
-      return <InterfaceEvaluation activeSubTab={activeSubTab} />;
+      return <InterfaceEvaluation activeSubTab={activeSubTab} navigate={navigate} />;
     }
 
     if (activeTab === 'resource') {
-      return <ResourceEvaluation activeSubTab={activeSubTab} />;
+      return <ResourceEvaluation activeSubTab={activeSubTab} navigate={navigate} />;
     }
 
     if (activeTab === 'data-proc') {
@@ -56,7 +57,7 @@ export default function App() {
     }
 
     if (activeTab === 'verification') {
-      return <ResultVerification activeSubTab={activeSubTab} />;
+      return <ResultVerification activeSubTab={activeSubTab} navigate={navigate} />;
     }
 
     if (activeTab === 'system') {
@@ -75,20 +76,22 @@ export default function App() {
   };
 
   return (
-    <Layout 
-      activeTab={activeTab} 
-      setActiveTab={(id) => {
-        setActiveTab(id);
-        // Reset subtab if switching main tabs, unless it's the same tab
-        if (id !== activeTab) {
-          const nav = NAV_ITEMS.find(n => n.id === id);
-          setActiveSubTab(nav?.subItems?.[0]?.id || '');
-        }
-      }}
-      activeSubTab={activeSubTab}
-      setActiveSubTab={setActiveSubTab}
-    >
-      {renderContent()}
-    </Layout>
+    <StoreProvider>
+      <Layout 
+        activeTab={activeTab} 
+        setActiveTab={(id) => {
+          setActiveTab(id);
+          if (id !== activeTab) {
+            const nav = NAV_ITEMS.find(n => n.id === id);
+            setActiveSubTab(nav?.subItems?.[0]?.id || '');
+          }
+        }}
+        activeSubTab={activeSubTab}
+        setActiveSubTab={setActiveSubTab}
+      >
+        {renderContent()}
+      </Layout>
+      <Toasts />
+    </StoreProvider>
   );
 }

@@ -1,341 +1,102 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
-  Search, 
-  Filter, 
-  Plus, 
-  Play, 
-  Settings2, 
-  FileText, 
-  Trash2, 
-  ChevronRight, 
-  CheckCircle2, 
-  AlertCircle, 
-  Clock, 
-  Activity, 
-  Zap, 
-  Layers, 
-  Globe, 
-  ArrowLeft, 
-  Download, 
-  RefreshCw,
-  MoreHorizontal,
-  Terminal,
-  BarChart3,
-  Calendar,
-  Copy,
-  Save,
-  Send
+  Search, Plus, Play, PauseCircle, Settings2, FileText, Trash2, ChevronRight,
+  CheckCircle2, XCircle, Activity, Zap, Layers, Globe, ArrowLeft, Download,
+  Terminal, BarChart3, Save, Send, Radar, GitCompare, Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-  AreaChart,
-  Area
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend, AreaChart, Area
 } from 'recharts';
+import {
+  useStore, Modal, Confirm, fmtNow, uid, rnd, pick, downloadText,
+  ApiTest, VersionTest, TestResult, ListKey, DEFAULT_API_BODY, fmtClock
+} from '../store';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-interface InterfaceEvaluationProps {
-  activeSubTab: string;
-}
-
+interface Props { activeSubTab: string; navigate: (tab: string, sub?: string) => void; }
 type ViewState = 'list' | 'config' | 'execution' | 'reportDetail' | 'versionDiff';
 
-export default function InterfaceEvaluation({ activeSubTab }: InterfaceEvaluationProps) {
+export default function InterfaceEvaluation({ activeSubTab, navigate }: Props) {
+  const store = useStore();
+  const { apiTests, protoTests, versionTests, results, notify, saveApiTest, deleteApiTest, runApiTest, stopApiTest, addVersionTest, runVersionTest, stopVersionTest, deleteVersionTest } = store;
+
   const [view, setView] = useState<ViewState>('list');
-  const [selectedItem, setSelectedItem] = useState<any>(null);
-  const [executionProgress, setExecutionProgress] = useState(0);
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [versionDiffConfig, setVersionDiffConfig] = useState({ base: 'v1.2.0', target: 'v1.3.0' });
-  const [reportModalOpen, setReportModalOpen] = useState(false);
-  const [selectedProtocol, setSelectedProtocol] = useState('HTTP');
-  const [isAutoRecognizing, setIsAutoRecognizing] = useState(false);
-  
-  // Filter States
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [listKey, setListKey] = useState<ListKey>('apiTests');
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
+  const [resultModal, setResultModal] = useState<TestResult | null>(null);
+  const [confirmDel, setConfirmDel] = useState<{ kind: 'api' | 'proto' | 'ver'; id: string; name: string } | null>(null);
   const [apiSearch, setApiSearch] = useState('');
-  const [apiStatusFilter, setApiStatusFilter] = useState('所有状态');
+  const [detecting, setDetecting] = useState(false);
 
-  // Helper to get relative date
-  const getRelativeDate = (daysAgo: number = 0, hoursAgo: number = 0, minsAgo: number = 0) => {
-    const d = new Date();
-    d.setDate(d.getDate() - daysAgo);
-    d.setHours(d.getHours() - hoursAgo);
-    d.setMinutes(d.getMinutes() - minsAgo);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  useEffect(() => { setView('list'); setSelectedId(null); }, [activeSubTab]);
+
+  const list = listKey === 'apiTests' ? apiTests : protoTests;
+  const selected = [...apiTests, ...protoTests].find(a => a.id === selectedId);
+  const selectedVersion = versionTests.find(v => v.id === selectedId);
+
+  const statusBadge = (s: string) => {
+    if (s === 'success' || s === 'completed') return <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-bold">成功</span>;
+    if (s === 'failed') return <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-bold">失败</span>;
+    if (s === 'running') return <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 font-bold flex items-center"><span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1 animate-ping" />执行中</span>;
+    return <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 font-bold">未执行</span>;
   };
 
-  // Mock Data
-  const API_TESTS = [
-    { name: '人脸检测接口功能测试', url: '/api/v1/face/detect', method: 'POST', status: 'success', time: getRelativeDate(0, 2, 30) },
-    { name: '车辆识别接口连通性', url: '/api/v1/vehicle/identify', method: 'GET', status: 'failed', time: getRelativeDate(0, 1, 15) },
-    { name: '轨迹查询接口性能预检', url: '/api/v1/track/query', method: 'POST', status: 'none', time: getRelativeDate(0, 3, 45) },
-  ];
-
-  const filteredAPITests = React.useMemo(() => {
-    return API_TESTS.filter(item => {
-      const matchesSearch = item.name.toLowerCase().includes(apiSearch.toLowerCase()) || 
-                           item.url.toLowerCase().includes(apiSearch.toLowerCase());
-      const statusMap: Record<string, string> = {
-        '成功': 'success',
-        '失败': 'failed',
-        '未执行': 'none'
-      };
-      const matchesStatus = apiStatusFilter === '所有状态' || item.status === statusMap[apiStatusFilter];
-      return matchesSearch && matchesStatus;
-    });
-  }, [apiSearch, apiStatusFilter]);
-
-  useEffect(() => {
-    setView('list');
-    setSelectedItem(null);
-  }, [activeSubTab]);
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'success':
-      case 'completed':
-        return <span className="text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 font-medium">成功</span>;
-      case 'executing':
-      case 'running':
-        return <span className="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-600 dark:bg-blue-900/20 font-medium animate-pulse">执行中</span>;
-      case 'failed':
-        return <span className="text-xs px-2 py-1 rounded-full bg-red-50 text-red-600 dark:bg-red-900/20 font-medium">失败</span>;
-      default:
-        return <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 font-medium">未执行</span>;
-    }
+  const handleRun = (id: string, key: ListKey) => {
+    const item = (key === 'apiTests' ? apiTests : protoTests).find(a => a.id === id);
+    if (!item) return;
+    if (item.status === 'running') { stopApiTest(key, id); notify(`${item.name} 已停止`, 'info'); return; }
+    runApiTest(key, id);
+    setSelectedId(id); setListKey(key); setView('execution');
+    notify(`开始执行「${item.name}」（${item.repeat} 次请求，实时统计）`, 'info');
   };
 
-  const getMethodBadge = (method: string) => {
-    const colors: Record<string, string> = {
-      GET: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-      POST: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-      PUT: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
-      DELETE: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-    };
+  const autoDetect = () => {
+    setDetecting(true);
+    setTimeout(() => {
+      const counts: Record<string, number> = {};
+      protoTests.forEach(p => { counts[p.protocol] = (counts[p.protocol] || 0) + 1; });
+      const summary = Object.entries(counts).map(([p, c]) => `${p}×${c}`).join('，') || '无';
+      setDetecting(false);
+      notify(`协议自动识别完成：当前已注册 ${protoTests.length} 项协议测试 —— ${summary}`, 'info');
+    }, 1600);
+  };
+
+  const Header = ({ title, sub }: { title: string; sub: string }) => (
+    <div>
+      <h2 className="text-2xl font-bold text-[var(--text-primary)]">{title}</h2>
+      <p className="text-sm text-[var(--text-secondary)] mt-1">{sub}</p>
+    </div>
+  );
+
+  /* ---------- API / 协议 列表 ---------- */
+  const renderTestList = (key: ListKey, withDetect = false) => {
+    const items = (key === 'apiTests' ? apiTests : protoTests).filter(a =>
+      !apiSearch || a.name.toLowerCase().includes(apiSearch.toLowerCase()) || a.url.toLowerCase().includes(apiSearch.toLowerCase()));
     return (
-      <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-bold", colors[method] || 'bg-slate-100 text-slate-700')}>
-        {method}
-      </span>
-    );
-  };
-
-  // --- List Page Renders ---
-
-  const renderListHeader = (title: string, onAdd: () => void) => (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-      <div>
-        <h2 className="text-2xl font-bold text-[var(--text-primary)]">{title}</h2>
-        <p className="text-sm text-[var(--text-secondary)] mt-1">接口评测 / {title}</p>
-      </div>
-      <div className="flex items-center space-x-2">
-        <button className="flex items-center px-4 py-2 border border-[var(--border-color)] rounded-lg text-sm font-medium hover:bg-[var(--bg-secondary)]">
-          <RefreshCw className="w-4 h-4 mr-2" /> 批量测试
-        </button>
-        <button 
-          onClick={onAdd}
-          className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-lg shadow-blue-500/20"
-        >
-          <Plus className="w-4 h-4 mr-2" /> 新建测试
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderFilters = () => (
-    <div className="card p-4 mb-6 flex flex-wrap items-center gap-4">
-      <div className="relative flex-1 min-w-[240px]">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-secondary)]" />
-        <input 
-          type="text" 
-          placeholder="搜索接口名称、地址..." 
-          value={apiSearch}
-          onChange={(e) => setApiSearch(e.target.value)}
-          className="w-full pl-10 pr-4 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" 
-        />
-      </div>
-      <select 
-        value={apiStatusFilter}
-        onChange={(e) => setApiStatusFilter(e.target.value)}
-        className="px-4 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-[var(--text-primary)]"
-      >
-        <option>所有状态</option>
-        <option>成功</option>
-        <option>失败</option>
-        <option>未执行</option>
-      </select>
-      <div className="flex items-center space-x-2">
-        <button className="p-2 border border-[var(--border-color)] rounded-lg hover:bg-[var(--bg-secondary)] text-[var(--text-secondary)]">
-          <Filter className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderAPITestList = () => (
-    <div className="space-y-6">
-      {renderListHeader('API测试', () => setView('config'))}
-      {renderFilters()}
-      <div className="card overflow-hidden">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="bg-[var(--bg-primary)] text-[var(--text-secondary)] text-xs uppercase tracking-wider">
-              <th className="px-6 py-4 font-semibold">测试名称</th>
-              <th className="px-6 py-4 font-semibold">接口地址</th>
-              <th className="px-6 py-4 font-semibold">请求方式</th>
-              <th className="px-6 py-4 font-semibold">状态</th>
-              <th className="px-6 py-4 font-semibold">创建时间</th>
-              <th className="px-6 py-4 text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--border-color)]">
-            {filteredAPITests.length > 0 ? filteredAPITests.map((item, i) => (
-              <tr key={i} className="hover:bg-[var(--bg-primary)] transition-colors group">
-                <td className="px-6 py-4 text-sm font-medium text-[var(--text-primary)]">{item.name}</td>
-                <td className="px-6 py-4 text-sm text-[var(--text-secondary)] font-mono">{item.url}</td>
-                <td className="px-6 py-4">{getMethodBadge(item.method)}</td>
-                <td className="px-6 py-4">{getStatusBadge(item.status)}</td>
-                <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">{item.time}</td>
-                <td className="px-6 py-4 text-right">
-                  <div className="flex items-center justify-end space-x-2">
-                    <button onClick={() => setView('config')} className="p-1.5 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-500 rounded" title="配置">
-                      <Settings2 className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => { setView('execution'); startExecution(); }} className="p-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-500 rounded" title="执行">
-                      <Play className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => setView('reportDetail')} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--text-secondary)] rounded" title="报告">
-                      <FileText className="w-4 h-4" />
-                    </button>
-                    <button className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 rounded" title="删除">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            )) : (
-              <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-[var(--text-secondary)]">
-                  未找到匹配的测试
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-
-  const renderCompatibilityList = () => (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-[var(--text-primary)]">兼容测试</h2>
-          <p className="text-sm text-[var(--text-secondary)] mt-1">接口评测 / 兼容测试</p>
-        </div>
-        <div className="flex items-center space-x-2">
-          <button 
-            onClick={() => setView('versionDiff')}
-            className="flex items-center px-4 py-2 border border-blue-500 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg text-sm font-medium transition-all"
-          >
-            <Zap className="w-4 h-4 mr-2" /> 多版本对比
-          </button>
-          <button 
-            onClick={() => setView('config')}
-            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-lg shadow-blue-500/20"
-          >
-            <Plus className="w-4 h-4 mr-2" /> 新建测试
-          </button>
-        </div>
-      </div>
-      <div className="card overflow-hidden">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="bg-[var(--bg-primary)] text-[var(--text-secondary)] text-xs uppercase tracking-wider">
-              <th className="px-6 py-4 font-semibold">测试名称</th>
-              <th className="px-6 py-4 font-semibold">接口名称</th>
-              <th className="px-6 py-4 font-semibold">版本数量</th>
-              <th className="px-6 py-4 font-semibold">状态</th>
-              <th className="px-6 py-4 font-semibold">创建时间</th>
-              <th className="px-6 py-4 text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--border-color)]">
-            {[
-              { name: 'FaceAPI 多版本兼容性', api: '人脸检测接口', versions: 3, status: 'success', time: getRelativeDate(12) },
-              { name: 'VehicleAPI 升级回归测试', api: '车辆识别接口', versions: 2, status: 'running', time: getRelativeDate(1) },
-            ].map((item, i) => (
-              <tr key={i} className="hover:bg-[var(--bg-primary)] transition-colors">
-                <td className="px-6 py-4 text-sm font-medium text-[var(--text-primary)]">{item.name}</td>
-                <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">{item.api}</td>
-                <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">{item.versions} 个版本</td>
-                <td className="px-6 py-4">{getStatusBadge(item.status)}</td>
-                <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">{item.time}</td>
-                <td className="px-6 py-4 text-right">
-                  <div className="flex items-center justify-end space-x-3">
-                    <button onClick={() => setView('config')} className="text-xs font-medium text-blue-500 hover:text-blue-600">配置</button>
-                    <button className="text-xs font-medium text-emerald-500 hover:text-emerald-600">执行</button>
-                    <button onClick={() => setView('reportDetail')} className="text-xs font-medium text-slate-500 hover:text-slate-600">报告</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-
-  const renderProtocolList = () => {
-    const protocols = [
-      { name: 'HTTPS 安全协议适配', api: '人脸检测接口', protocol: 'HTTPS', status: 'success', time: getRelativeDate(15) },
-      { name: 'HTTP 降级兼容测试', api: '车辆识别接口', protocol: 'HTTP', status: 'none', time: getRelativeDate(1) },
-      { name: 'WebSocket 双向通信测试', api: '实时视频流推送', protocol: 'WS', status: 'running', time: getRelativeDate(0, 5) },
-      { name: 'gRPC 接口性能评测', api: '特征向量检索服务', protocol: 'gRPC', status: 'success', time: getRelativeDate(0, 10) },
-    ];
-
-    const handleAutoRecognize = () => {
-      setIsAutoRecognizing(true);
-      setTimeout(() => {
-        setIsAutoRecognizing(false);
-        alert('协议识别完成：检测到 2 个 HTTP 接口，1 个 WebSocket 接口，1 个 gRPC 接口。已自动适配测试配置。');
-      }, 2000);
-    };
-
-    return (
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-          <div>
-            <h2 className="text-2xl font-bold text-[var(--text-primary)]">协议测试</h2>
-            <p className="text-sm text-[var(--text-secondary)] mt-1">接口评测 / 协议测试</p>
+      <div className="space-y-4">
+        <Header title={key === 'apiTests' ? 'API测试' : '多协议测试'} sub="执行由引擎逐条发起请求并记录状态码与延迟，完成后自动生成测试结果（可在「结果校验」对比）" />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-secondary)]" />
+            <input value={apiSearch} onChange={e => setApiSearch(e.target.value)} placeholder="搜索接口名称、路径..."
+              className="pl-10 pr-4 py-2 bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 w-64" />
           </div>
-          <div className="flex items-center space-x-2">
-            <button 
-              onClick={handleAutoRecognize}
-              disabled={isAutoRecognizing}
-              className="flex items-center px-4 py-2 border border-blue-500 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
-            >
-              <RefreshCw className={cn("w-4 h-4 mr-2", isAutoRecognizing && "animate-spin")} />
-              {isAutoRecognizing ? '正在识别协议...' : '协议自动识别'}
-            </button>
-            <button 
-              onClick={() => { setSelectedProtocol('HTTP'); setView('config'); }}
-              className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-lg shadow-blue-500/20"
-            >
-              <Plus className="w-4 h-4 mr-2" /> 新建协议测试
+          <div className="flex gap-2">
+            {withDetect && (
+              <button onClick={autoDetect} disabled={detecting} className="flex items-center px-3 py-2 border border-[var(--border-color)] rounded-lg text-sm hover:bg-[var(--bg-secondary)] disabled:opacity-60">
+                <Radar className={cn("w-4 h-4 mr-2 text-purple-500", detecting && 'animate-spin')} /> {detecting ? '识别中...' : '协议自动识别'}
+              </button>
+            )}
+            <button onClick={() => { setSelectedId(null); setListKey(key); setView('config'); }} className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-lg shadow-blue-500/20">
+              <Plus className="w-4 h-4 mr-2" /> 新建测试
             </button>
           </div>
         </div>
@@ -343,39 +104,51 @@ export default function InterfaceEvaluation({ activeSubTab }: InterfaceEvaluatio
           <table className="w-full text-left">
             <thead>
               <tr className="bg-[var(--bg-primary)] text-[var(--text-secondary)] text-xs uppercase tracking-wider">
-                <th className="px-6 py-4 font-semibold">测试名称</th>
-                <th className="px-6 py-4 font-semibold">接口名称</th>
-                <th className="px-6 py-4 font-semibold">协议类型</th>
+                <th className="px-6 py-4 font-semibold">测试项</th>
+                <th className="px-6 py-4 font-semibold">协议</th>
                 <th className="px-6 py-4 font-semibold">状态</th>
+                <th className="px-6 py-4 font-semibold">最近结果</th>
                 <th className="px-6 py-4 font-semibold">创建时间</th>
-                <th className="px-6 py-4 text-right">操作</th>
+                <th className="px-6 py-4 font-semibold text-right">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-color)]">
-              {protocols.map((item, i) => (
-                <tr key={i} className="hover:bg-[var(--bg-primary)] transition-colors">
-                  <td className="px-6 py-4 text-sm font-medium text-[var(--text-primary)]">{item.name}</td>
-                  <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">{item.api}</td>
-                  <td className="px-6 py-4">
-                    <span className={cn(
-                      "text-xs font-mono px-2 py-0.5 rounded font-bold",
-                      item.protocol === 'HTTPS' || item.protocol === 'HTTP' ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" :
-                      item.protocol === 'WS' ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" :
-                      "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
-                    )}>
-                      {item.protocol}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">{getStatusBadge(item.status)}</td>
-                  <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">{item.time}</td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end space-x-3">
-                      <button onClick={() => { setSelectedProtocol(item.protocol.includes('HTTP') ? 'HTTP' : item.protocol); setView('config'); }} className="text-xs font-medium text-blue-500 hover:text-blue-600">配置</button>
-                      <button className="text-xs font-medium text-emerald-500 hover:text-emerald-600">执行</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {items.map(a => {
+                const okN = a.attempts.filter(x => x.ok).length;
+                const avg = a.attempts.length ? Math.round(a.attempts.reduce((s, x) => s + x.latency, 0) / a.attempts.length) : 0;
+                return (
+                  <tr key={a.id} className="hover:bg-[var(--bg-primary)] transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center">
+                        <div className="w-8 h-8 rounded bg-purple-50 dark:bg-purple-900/20 flex items-center justify-center mr-3 shrink-0"><Zap className="w-4 h-4 text-purple-500" /></div>
+                        <div>
+                          <p className="text-sm font-medium text-[var(--text-primary)]">{a.name}</p>
+                          <p className="text-xs font-mono text-[var(--text-secondary)]">{a.method} {a.url}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4"><span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold">{a.protocol}</span></td>
+                    <td className="px-6 py-4">{statusBadge(a.status)}</td>
+                    <td className="px-6 py-4 text-xs text-[var(--text-secondary)]">
+                      {a.attempts.length > 0 && a.status !== 'running' ? (
+                        <span className={okN === a.attempts.length ? 'text-emerald-600' : 'text-red-500'}>{okN}/{a.attempts.length} 成功 · 均延 {avg}ms</span>
+                      ) : a.status === 'running' ? `已完成 ${a.attempts.length}/${a.repeat}` : '—'}
+                    </td>
+                    <td className="px-6 py-4 text-xs text-[var(--text-secondary)]">{a.createTime}</td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center justify-end gap-1">
+                        <button title="配置" onClick={() => { setSelectedId(a.id); setListKey(key); setView('config'); }} className="p-2 hover:bg-[var(--bg-primary)] rounded-lg text-[var(--text-secondary)] hover:text-blue-500"><Settings2 className="w-4 h-4" /></button>
+                        <button title={a.status === 'running' ? '停止' : '执行'} onClick={() => handleRun(a.id, key)} className={cn("p-2 rounded-lg", a.status === 'running' ? 'text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20' : 'text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20')}>
+                          {a.status === 'running' ? <PauseCircle className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                        </button>
+                        <button title="查看报告" disabled={!a.resultId} onClick={() => { if (a.resultId) { setSelectedId(a.id); setView('reportDetail'); } }} className={cn("p-2 rounded-lg", a.resultId ? 'text-[var(--text-secondary)] hover:text-blue-500' : 'text-[var(--border-color)] cursor-not-allowed')}><BarChart3 className="w-4 h-4" /></button>
+                        <button title="删除" onClick={() => setConfirmDel({ kind: key === 'apiTests' ? 'api' : 'proto', id: a.id, name: a.name })} className="p-2 hover:bg-[var(--bg-primary)] rounded-lg text-[var(--text-secondary)] hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {items.length === 0 && <tr><td colSpan={6} className="px-6 py-12 text-center text-[var(--text-secondary)]">暂无测试项，点击"新建测试"添加</td></tr>}
             </tbody>
           </table>
         </div>
@@ -383,558 +156,227 @@ export default function InterfaceEvaluation({ activeSubTab }: InterfaceEvaluatio
     );
   };
 
-  // --- Config Page Render ---
-
-  const renderConfig = () => (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <button onClick={() => setView('list')} className="p-2 hover:bg-[var(--bg-secondary)] rounded-lg text-[var(--text-secondary)]">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <h2 className="text-2xl font-bold text-[var(--text-primary)]">测试配置</h2>
-        </div>
-        <div className="flex items-center space-x-2">
-          <button className="px-4 py-2 border border-[var(--border-color)] rounded-lg text-sm font-medium hover:bg-[var(--bg-secondary)]">
-            取消
-          </button>
-          <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-lg shadow-blue-500/20">
-            <Save className="w-4 h-4 mr-2 inline" /> 保存配置
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          {/* Basic Info */}
-          <div className="card p-6">
-            <h3 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-4">基本信息</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-primary)]">测试名称</label>
-                <input type="text" defaultValue="人脸检测接口功能测试" className="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm" />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-primary)]">协议类型</label>
-                <select 
-                  value={selectedProtocol}
-                  onChange={(e) => setSelectedProtocol(e.target.value)}
-                  className="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm"
-                >
-                  <option value="HTTP">HTTP/HTTPS</option>
-                  <option value="WS">WebSocket</option>
-                  <option value="gRPC">gRPC</option>
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-primary)]">接口地址</label>
-                <input type="text" defaultValue={selectedProtocol === 'WS' ? 'ws://api.police.gov/v1/stream' : selectedProtocol === 'gRPC' ? 'api.police.gov:50051' : '/api/v1/face/detect'} className="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm font-mono" />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-primary)]">接口版本</label>
-                <input type="text" defaultValue="v1.2.0" className="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm" />
-              </div>
-            </div>
-          </div>
-
-          {/* Protocol Specific Config */}
-          {selectedProtocol === 'HTTP' && (
-            <div className="card p-6">
-              <h3 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-4">SSL/TLS 配置</h3>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-[var(--text-primary)]">启用 HTTPS / SSL</span>
-                  <div className="w-12 h-6 bg-blue-600 rounded-full relative cursor-pointer">
-                    <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-[var(--text-primary)]">验证服务器证书</label>
-                    <select className="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm">
-                      <option>系统默认</option>
-                      <option>禁用验证 (不安全)</option>
-                      <option>自定义 CA 证书</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-[var(--text-primary)]">TLS 版本</label>
-                    <select className="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm">
-                      <option>Auto</option>
-                      <option>TLS 1.2</option>
-                      <option>TLS 1.3</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {selectedProtocol === 'WS' && (
-            <div className="card p-6">
-              <h3 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-4">WebSocket 配置</h3>
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-[var(--text-primary)]">连接握手参数 (Query Params)</label>
-                  <div className="flex space-x-2">
-                    <input type="text" placeholder="Key" className="flex-1 px-3 py-1.5 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-xs font-mono" />
-                    <input type="text" placeholder="Value" className="flex-1 px-3 py-1.5 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-xs font-mono" />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-[var(--text-primary)]">心跳间隔 (s)</label>
-                  <input type="number" defaultValue="30" className="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm" />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {selectedProtocol === 'gRPC' && (
-            <div className="card p-6">
-              <h3 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-4">gRPC / Protobuf 配置</h3>
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-[var(--text-primary)]">Proto 文件定义</label>
-                  <div className="flex items-center justify-center border-2 border-dashed border-[var(--border-color)] rounded-xl p-8 hover:bg-[var(--bg-primary)] transition-colors cursor-pointer">
-                    <div className="text-center">
-                      <Plus className="w-8 h-8 text-blue-500 mx-auto mb-2" />
-                      <p className="text-sm font-medium">点击或拖拽上传 .proto 文件</p>
-                      <p className="text-xs text-[var(--text-secondary)] mt-1">支持多文件上传，自动解析依赖</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-[var(--text-primary)]">Service 名称</label>
-                    <input type="text" placeholder="FaceService" className="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-[var(--text-primary)]">Method 名称</label>
-                    <input type="text" placeholder="ExtractFeatures" className="w-full px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Request Config */}
-          <div className="card p-6">
-            <h3 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-4">
-              {selectedProtocol === 'WS' ? '消息配置' : selectedProtocol === 'gRPC' ? '请求消息 (Protobuf JSON)' : '请求配置'}
-            </h3>
-            <div className="space-y-4">
-              {selectedProtocol === 'HTTP' && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-[var(--text-primary)]">请求方式</label>
-                  <div className="flex space-x-2">
-                    {['GET', 'POST', 'PUT', 'DELETE'].map(m => (
-                      <button key={m} className={cn(
-                        "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
-                        m === 'POST' ? "bg-blue-600 text-white" : "bg-[var(--bg-primary)] border border-[var(--border-color)] text-[var(--text-secondary)]"
-                      )}>
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {(selectedProtocol === 'HTTP' || selectedProtocol === 'WS' || selectedProtocol === 'gRPC') && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-medium text-[var(--text-primary)]">
-                      {selectedProtocol === 'HTTP' ? '请求头 (Headers)' : '元数据 (Metadata)'}
-                    </label>
-                    <button className="text-blue-500 text-[10px] font-bold">+ 新增</button>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex space-x-2">
-                      <input type="text" defaultValue={selectedProtocol === 'HTTP' ? "Content-Type" : "authorization"} className="flex-1 px-3 py-1.5 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-xs font-mono" />
-                      <input type="text" defaultValue={selectedProtocol === 'HTTP' ? "application/json" : "Bearer {{token}}"} className="flex-1 px-3 py-1.5 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-xs font-mono" />
-                      <button className="p-1.5 text-red-500"><Trash2 className="w-4 h-4" /></button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-primary)]">
-                  {selectedProtocol === 'WS' ? '发送消息 (JSON/Text)' : selectedProtocol === 'gRPC' ? '请求消息 (JSON 映射)' : '请求体 (Body - JSON)'}
-                </label>
-                <div className="bg-slate-900 rounded-lg p-4 font-mono text-xs text-blue-400 overflow-hidden">
-                  <textarea 
-                    rows={6}
-                    className="w-full bg-transparent outline-none resize-none"
-                    defaultValue={selectedProtocol === 'gRPC' ? `{
-  "image": {
-    "data": "...",
-    "type": "FACE"
-  },
-  "options": {
-    "score_threshold": 0.8
-  }
-}` : `{
-  "image_base64": "...",
-  "min_confidence": 0.8,
-  "detect_landmarks": true
-}`}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          {/* Response Validation */}
-          <div className="card p-6">
-            <h3 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-4">响应校验</h3>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--text-primary)]">状态码校验</span>
-                <input type="text" defaultValue="200" className="w-20 px-2 py-1 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded text-xs text-center font-mono" />
-              </div>
-              <div className="space-y-2">
-                <span className="text-xs text-[var(--text-primary)]">字段校验</span>
-                <div className="bg-[var(--bg-primary)] p-2 rounded border border-[var(--border-color)] text-[10px] font-mono">
-                  <div className="flex justify-between mb-1">
-                    <span>$.status</span>
-                    <span className="text-emerald-500">== "OK"</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>$.data.faces</span>
-                    <span className="text-emerald-500">is_array</span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--text-primary)]">响应时间限制 (ms)</span>
-                <input type="number" defaultValue="500" className="w-20 px-2 py-1 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded text-xs text-center font-mono" />
-              </div>
-            </div>
-          </div>
-
-          {/* Execution Config */}
-          <div className="card p-6">
-            <h3 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-4">执行配置</h3>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-primary)]">执行方式</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button className="py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white">立即执行</button>
-                  <button className="py-1.5 rounded-lg text-xs font-medium bg-[var(--bg-primary)] border border-[var(--border-color)] text-[var(--text-secondary)]">定时执行</button>
-                </div>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--text-primary)]">执行次数</span>
-                <input type="number" defaultValue="1" className="w-20 px-2 py-1 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded text-xs text-center" />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--text-primary)]">超时时间 (s)</span>
-                <input type="number" defaultValue="30" className="w-20 px-2 py-1 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded text-xs text-center" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  // --- Execution Page Render ---
-
-  const startExecution = () => {
-    setIsExecuting(true);
-    setExecutionProgress(0);
-    const interval = setInterval(() => {
-      setExecutionProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsExecuting(false);
-          return 100;
-        }
-        return prev + 5;
-      });
-    }, 200);
-  };
-
-  const renderExecution = () => (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <button onClick={() => setView('list')} className="p-2 hover:bg-[var(--bg-secondary)] rounded-lg text-[var(--text-secondary)]">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <h2 className="text-2xl font-bold text-[var(--text-primary)]">测试执行中</h2>
-        </div>
-        <button 
-          onClick={() => setView('reportDetail')}
-          disabled={isExecuting}
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          查看报告
+  /* ---------- 多版本列表 ---------- */
+  const renderVersionList = () => (
+    <div className="space-y-4">
+      <Header title="多版本测试" sub="对同一接口在多个算法版本上执行兼容性验证，完成后生成兼容性测试结果" />
+      <div className="flex justify-end">
+        <button onClick={() => setVersionModalOpen(true)} className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-lg shadow-blue-500/20">
+          <Plus className="w-4 h-4 mr-2" /> 新建版本测试
         </button>
       </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="md:col-span-2 space-y-6">
-          {/* Progress Card */}
-          <div className="card p-8 flex flex-col items-center text-center">
-            <div className="relative w-32 h-32 mb-6">
-              <svg className="w-full h-full" viewBox="0 0 100 100">
-                <circle className="text-slate-100 dark:text-slate-800 stroke-current" strokeWidth="8" fill="transparent" r="40" cx="50" cy="50" />
-                <circle 
-                  className="text-blue-500 stroke-current transition-all duration-300" 
-                  strokeWidth="8" 
-                  strokeDasharray={251.2} 
-                  strokeDashoffset={251.2 * (1 - executionProgress / 100)} 
-                  strokeLinecap="round" 
-                  fill="transparent" 
-                  r="40" 
-                  cx="50" 
-                  cy="50" 
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-2xl font-bold text-[var(--text-primary)]">{executionProgress}%</span>
-              </div>
-            </div>
-            <h3 className="text-lg font-bold text-[var(--text-primary)] mb-1">
-              {isExecuting ? '正在执行测试用例...' : '测试执行完成'}
-            </h3>
-            <p className="text-sm text-[var(--text-secondary)]">人脸检测接口功能测试 (v1.2.0)</p>
-          </div>
-
-          {/* Real-time Logs */}
-          <div className="card overflow-hidden flex flex-col h-[400px]">
-            <div className="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--bg-primary)] flex items-center justify-between">
-              <div className="flex items-center text-xs font-bold text-[var(--text-secondary)] uppercase">
-                <Terminal className="w-4 h-4 mr-2" /> 实时日志
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[10px] text-emerald-500 font-bold">LIVE</span>
-              </div>
-            </div>
-            <div className="flex-1 bg-slate-950 p-4 font-mono text-xs space-y-2 overflow-y-auto">
-              <p className="text-slate-400">[10:00:01] <span className="text-blue-400">INFO</span> 初始化测试环境...</p>
-              <p className="text-slate-400">[10:00:02] <span className="text-blue-400">INFO</span> 正在发送请求: POST /api/v1/face/detect</p>
-              <p className="text-slate-400">[10:00:02] <span className="text-slate-500">DEBUG</span> Headers: {"{ \"Content-Type\": \"application/json\" }"}</p>
-              <p className="text-slate-400">[10:00:03] <span className="text-emerald-400">SUCCESS</span> 收到响应: 200 OK (142ms)</p>
-              <p className="text-slate-400">[10:00:03] <span className="text-blue-400">INFO</span> 正在校验响应字段...</p>
-              <p className="text-slate-400">[10:00:04] <span className="text-emerald-400">SUCCESS</span> 字段校验通过: $.status == "OK"</p>
-              {executionProgress > 50 && (
-                <>
-                  <p className="text-slate-400">[10:00:05] <span className="text-blue-400">INFO</span> 正在执行第 2 次测试...</p>
-                  <p className="text-slate-400">[10:00:06] <span className="text-emerald-400">SUCCESS</span> 收到响应: 200 OK (156ms)</p>
-                </>
-              )}
-              {executionProgress === 100 && (
-                <p className="text-slate-400">[10:00:07] <span className="text-emerald-400 font-bold">DONE</span> 测试执行完毕，正在生成报告。</p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          {/* Statistics */}
-          <div className="card p-6">
-            <h3 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-6">统计信息</h3>
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center text-emerald-600 mr-3">
-                    <CheckCircle2 className="w-4 h-4" />
+      <div className="card overflow-hidden">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="bg-[var(--bg-primary)] text-[var(--text-secondary)] text-xs uppercase tracking-wider">
+              <th className="px-6 py-4 font-semibold">测试名称</th>
+              <th className="px-6 py-4 font-semibold">涉及版本</th>
+              <th className="px-6 py-4 font-semibold">状态</th>
+              <th className="px-6 py-4 font-semibold">进度</th>
+              <th className="px-6 py-4 font-semibold">时间</th>
+              <th className="px-6 py-4 font-semibold text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border-color)]">
+            {versionTests.map(v => (
+              <tr key={v.id} className="hover:bg-[var(--bg-primary)] transition-colors">
+                <td className="px-6 py-4">
+                  <p className="text-sm font-medium">{v.name}</p>
+                  <p className="text-xs font-mono text-[var(--text-secondary)]">{v.api} · 基准 {v.base}</p>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex flex-wrap gap-1">{v.versions.map(ver => <span key={ver} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono">{ver}</span>)}</div>
+                </td>
+                <td className="px-6 py-4">{statusBadge(v.status)}</td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-20 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                      <div className={cn("h-full rounded-full transition-all duration-700", v.status === 'failed' ? 'bg-red-400' : 'bg-blue-500')} style={{ width: `${v.progress}%` }} />
+                    </div>
+                    <span className="text-xs text-[var(--text-secondary)]">{v.progress}%</span>
                   </div>
-                  <span className="text-sm text-[var(--text-secondary)]">成功次数</span>
-                </div>
-                <span className="text-lg font-bold text-emerald-600">{Math.floor(executionProgress / 10)}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div className="w-8 h-8 rounded-lg bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-600 mr-3">
-                    <AlertCircle className="w-4 h-4" />
+                </td>
+                <td className="px-6 py-4 text-xs text-[var(--text-secondary)]">{v.time}</td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center justify-end gap-1">
+                    <button title={v.status === 'running' ? '停止' : '执行'} onClick={() => { if (v.status === 'running') { stopRunningVersion(v); } else { runVersionTest(v.id); notify(`开始执行「${v.name}」`, 'info'); } }}
+                      className={cn("p-2 rounded-lg", v.status === 'running' ? 'text-orange-500' : 'text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20')}>
+                      {v.status === 'running' ? <PauseCircle className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    </button>
+                    <button title="查看兼容性结果" disabled={!v.resultId} onClick={() => { const r = results.find(x => x.id === v.resultId); if (r) setResultModal(r); }}
+                      className={cn("p-2 rounded-lg", v.resultId ? 'text-[var(--text-secondary)] hover:text-blue-500' : 'text-[var(--border-color)] cursor-not-allowed')}><Eye className="w-4 h-4" /></button>
+                    <button title="多版本差异分析" onClick={() => { setSelectedId(v.id); setView('versionDiff'); }} className="p-2 hover:bg-[var(--bg-primary)] rounded-lg text-[var(--text-secondary)] hover:text-blue-500"><GitCompare className="w-4 h-4" /></button>
+                    <button title="删除" onClick={() => setConfirmDel({ kind: 'ver', id: v.id, name: v.name })} className="p-2 hover:bg-[var(--bg-primary)] rounded-lg text-[var(--text-secondary)] hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                   </div>
-                  <span className="text-sm text-[var(--text-secondary)]">失败次数</span>
-                </div>
-                <span className="text-lg font-bold text-red-600">0</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-600 mr-3">
-                    <Clock className="w-4 h-4" />
-                  </div>
-                  <span className="text-sm text-[var(--text-secondary)]">平均耗时</span>
-                </div>
-                <span className="text-lg font-bold text-blue-600">148ms</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="card p-6">
-            <h3 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-4">测试对象</h3>
-            <div className="space-y-3">
-              <div className="p-3 bg-[var(--bg-primary)] rounded-lg border border-[var(--border-color)]">
-                <p className="text-[10px] text-[var(--text-secondary)] uppercase font-bold mb-1">API Endpoint</p>
-                <p className="text-xs font-mono text-[var(--text-primary)] truncate">https://api.police.gov/v1/face/detect</p>
-              </div>
-              <div className="p-3 bg-[var(--bg-primary)] rounded-lg border border-[var(--border-color)]">
-                <p className="text-[10px] text-[var(--text-secondary)] uppercase font-bold mb-1">Version</p>
-                <p className="text-xs font-mono text-[var(--text-primary)]">v1.2.0 (Stable)</p>
-              </div>
-            </div>
-          </div>
-        </div>
+                </td>
+              </tr>
+            ))}
+            {versionTests.length === 0 && <tr><td colSpan={6} className="px-6 py-12 text-center text-[var(--text-secondary)]">暂无版本测试</td></tr>}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 
-  // --- Report Detail Page Render ---
+  // 停止运行中的版本测试
+  const stopRunningVersion = (v: VersionTest) => { stopVersionTest(v.id); notify(`「${v.name}」已停止`, 'info'); };
 
-  const renderReportDetail = () => {
-    const getTrendTimes = () => {
-      const times = [];
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date();
-        d.setHours(d.getHours() - i);
-        times.push(`${String(d.getHours()).padStart(2, '0')}:00`);
-      }
-      return times;
-    };
-
-    const trendTimes = getTrendTimes();
-
-    const timeData = [
-      { time: trendTimes[0], latency: 120 },
-      { time: trendTimes[1], latency: 142 },
-      { time: trendTimes[2], latency: 135 },
-      { time: trendTimes[3], latency: 156 },
-      { time: trendTimes[4], latency: 148 },
-      { time: trendTimes[5], latency: 130 },
-    ];
-
-    const pieData = [
-      { name: '成功', value: 98, color: '#10b981' },
-      { name: '失败', value: 2, color: '#ef4444' },
-    ];
-
+  /* ---------- 配置页（新建/编辑，真实保存） ---------- */
+  const renderConfig = () => {
+    const editing = selected && listKey ? apiTests.concat(protoTests).find(a => a.id === selectedId) : undefined;
     return (
       <div className="space-y-6">
+        <button onClick={() => setView('list')} className="flex items-center text-sm text-[var(--text-secondary)] hover:text-blue-500"><ArrowLeft className="w-4 h-4 mr-1" /> 返回列表</button>
+        <Header title={editing ? `配置测试 ${editing.id}` : '新建接口测试'} sub="保存后立即可在列表点击 ▶ 由引擎真实发起执行" />
+        <ApiConfigForm key={editing?.id || 'new'} initial={editing} defaultList={listKey} onCancel={() => setView('list')} onSave={(t) => {
+          saveApiTest(listKey, t);
+          notify(`「${t.name}」配置已保存${editing ? '' : '，可立即执行'}`);
+          setView('list');
+        }} />
+      </div>
+    );
+  };
+
+  /* ---------- 执行页（真实进度+实时日志） ---------- */
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; });
+
+  const renderExecution = () => {
+    if (!selected) return null;
+    const done = selected.progress >= 100;
+    const okN = selected.attempts.filter(x => x.ok).length;
+    const failN = selected.attempts.length - okN;
+    const avg = selected.attempts.length ? Math.round(selected.attempts.reduce((s, x) => s + x.latency, 0) / selected.attempts.length) : 0;
+    const maxL = selected.attempts.reduce((m, x) => Math.max(m, x.latency), 0);
+    const logs = [
+      `[${fmtClock(new Date())}] 初始化测试环境...`,
+      `[${fmtClock(new Date())}] 连接目标 ${selected.protocol}://${selected.url.replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '').replace(/^grpc:\/\//, '')}...`,
+      ...selected.attempts.map((a, i) => `[${a.time}] 第${i + 1}次请求 ${selected.method} ${selected.url} -> ${a.code} (${a.latency}ms) ${a.ok ? '✓ 通过' : '✗ 失败'}`),
+      ...(done ? [done && selected.status === 'success' ? '====== 测试完成：全部统计已写入结果库 ======' : '====== 测试完成：存在失败请求，详见报告 ======'] : []),
+    ];
+    return (
+      <div className="space-y-6">
+        <button onClick={() => setView('list')} className="flex items-center text-sm text-[var(--text-secondary)] hover:text-blue-500"><ArrowLeft className="w-4 h-4 mr-1" /> 返回列表</button>
+        <Header title={`执行：${selected.name}`} sub={`${selected.method} ${selected.url} · 计划 ${selected.repeat} 次请求`} />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="card p-6 flex flex-col items-center justify-center">
+            <div className="relative w-40 h-40">
+              <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border-color)" strokeWidth="8" />
+                <circle cx="60" cy="60" r="52" fill="none" stroke={selected.status === 'failed' ? '#ef4444' : '#3b82f6'} strokeWidth="8" strokeLinecap="round"
+                  strokeDasharray={`${selected.progress * 3.27} 327`} className="transition-all duration-700" />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-3xl font-bold">{selected.progress}%</span>
+                <span className="text-xs text-[var(--text-secondary)] mt-1">{done ? (selected.status === 'success' ? '执行成功' : '执行失败') : '执行中'}</span>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => handleRun(selected.id, listKey)} className={cn("flex items-center px-3 py-1.5 rounded-lg text-xs font-medium", selected.status === 'running' ? 'bg-orange-500 text-white' : 'bg-blue-600 text-white hover:bg-blue-700')}>
+                {selected.status === 'running' ? <><PauseCircle className="w-3.5 h-3.5 mr-1" /> 停止</> : <><Play className="w-3.5 h-3.5 mr-1" /> {selected.attempts.length ? '重新执行' : '开始执行'}</>}
+              </button>
+              {done && selected.resultId && (
+                <button onClick={() => setView('reportDetail')} className="flex items-center px-3 py-1.5 border border-blue-500 text-blue-500 rounded-lg text-xs font-medium hover:bg-blue-50 dark:hover:bg-blue-900/20">
+                  <BarChart3 className="w-3.5 h-3.5 mr-1" /> 查看报告
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="card p-6 lg:col-span-2">
+            <div className="grid grid-cols-4 gap-3 mb-4">
+              {[
+                { l: '总请求', v: `${selected.attempts.length}/${selected.repeat}`, c: '' },
+                { l: '成功', v: okN, c: 'text-emerald-500' },
+                { l: '失败', v: failN, c: 'text-red-500' },
+                { l: '平均延迟', v: `${avg}ms`, c: 'text-blue-500' },
+              ].map(s => (
+                <div key={s.l} className="p-3 bg-[var(--bg-primary)] rounded-lg text-center">
+                  <p className={cn("text-xl font-bold", s.c)}>{s.v}</p><p className="text-[10px] text-[var(--text-secondary)] mt-0.5">{s.l}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center mb-2"><Terminal className="w-4 h-4 mr-2 text-[var(--text-secondary)]" /><h4 className="text-sm font-semibold">实时执行日志</h4></div>
+            <div ref={logRef} className="bg-slate-900 text-green-400 font-mono text-xs p-4 rounded-lg h-56 overflow-y-auto space-y-1">
+              {logs.map((l, i) => <div key={i} className={l.includes('✗') ? 'text-red-400' : l.includes('======') ? 'text-yellow-400' : ''}>$ {l}</div>)}
+              {selected.status === 'running' && <div className="animate-pulse">$ 等待下一次请求...</div>}
+            </div>
+            {maxL > selected.latencyLimit && <p className="text-[10px] text-orange-500 mt-2">⚠ 最大延迟 {maxL}ms 超过阈值 {selected.latencyLimit}ms，将在报告中标记为警告</p>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /* ---------- 报告页（基于真实 attempts/result） ---------- */
+  const renderReport = () => {
+    if (!selected) return null;
+    const result = results.find(r => r.id === selected.resultId);
+    if (!result) return <div className="card p-8 text-center text-[var(--text-secondary)]">暂无报告数据，请先执行测试。</div>;
+    const okN = selected.attempts.filter(x => x.ok).length;
+    const pieData = [{ name: '成功', value: okN, color: '#10b981' }, { name: '失败', value: selected.attempts.length - okN, color: '#ef4444' }];
+    const trend = selected.attempts.map((a, i) => ({ no: `#${i + 1}`, latency: a.latency, ok: a.ok }));
+    return (
+      <div className="space-y-6">
+        <button onClick={() => setView('list')} className="flex items-center text-sm text-[var(--text-secondary)] hover:text-blue-500"><ArrowLeft className="w-4 h-4 mr-1" /> 返回列表</button>
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <button onClick={() => setView('list')} className="p-2 hover:bg-[var(--bg-secondary)] rounded-lg text-[var(--text-secondary)]">
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <h2 className="text-2xl font-bold text-[var(--text-primary)]">测试报告详情</h2>
-          </div>
-          <div className="flex items-center space-x-2">
-            <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
-              重新测试
-            </button>
-          </div>
+          <Header title={`${selected.name} - 执行报告`} sub={`结果 ${result.id} · ${result.generationTime} · 节点 ${result.node}`} />
+          <button onClick={() => {
+            downloadText(`${result.id}_${selected.name}.txt`,
+              [`# ${selected.name} 执行报告`, '', `接口: ${selected.method} ${selected.url}`, `成功率: ${result.successRate}%  平均延迟: ${result.metrics.avgLatency}ms  最大延迟: ${result.metrics.maxLatency}ms`, '', '## 每次请求',
+               ...selected.attempts.map((a, i) => `#${i + 1} [${a.time}] ${a.code} ${a.latency}ms ${a.ok ? 'OK' : 'FAIL'}`)].join('\n'));
+            notify('执行报告已导出');
+          }} className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"><Download className="w-4 h-4 mr-2" /> 导出报告</button>
         </div>
-
-        {/* Summary Card */}
-        <div className="card p-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-4">
-              <h3 className="text-xl font-bold">人脸检测接口功能测试报告 (v1.2.0)</h3>
-              <div className="flex flex-wrap gap-4 text-sm text-[var(--text-secondary)]">
-                <div className="flex items-center"><Calendar className="w-4 h-4 mr-1.5" /> 2026-03-01 10:45:00</div>
-                <div className="flex items-center"><Zap className="w-4 h-4 mr-1.5 text-blue-500" /> API测试</div>
-                <div className="flex items-center"><CheckCircle2 className="w-4 h-4 mr-1.5 text-emerald-500" /> 测试通过</div>
-              </div>
-            </div>
-            <div className="flex gap-8">
-              <div className="text-center">
-                <p className="text-2xl font-bold text-emerald-500">98%</p>
-                <p className="text-xs text-[var(--text-secondary)]">成功率</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-red-500">2%</p>
-                <p className="text-xs text-[var(--text-secondary)]">失败率</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-blue-500">0</p>
-                <p className="text-xs text-[var(--text-secondary)]">错误数量</p>
-              </div>
-            </div>
-          </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { l: '成功率', v: `${result.successRate}%`, c: result.successRate >= 95 ? 'text-emerald-500' : 'text-red-500' },
+            { l: '平均延迟', v: `${result.metrics.avgLatency}ms`, c: 'text-blue-500' },
+            { l: '最大延迟', v: `${result.metrics.maxLatency}ms`, c: 'text-purple-500' },
+            { l: '请求次数', v: selected.attempts.length, c: '' },
+          ].map(s => <div key={s.l} className="card p-4"><p className={cn("text-2xl font-bold", s.c)}>{s.v}</p><p className="text-xs text-[var(--text-secondary)] mt-1">{s.l}</p></div>)}
         </div>
-
-        {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="card p-6 lg:col-span-2">
-            <h4 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-6">响应时间趋势 (ms)</h4>
+            <h3 className="text-sm font-semibold mb-4">每次请求延迟（真实尝试记录）</h3>
             <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={timeData}>
-                  <defs>
-                    <linearGradient id="colorLatency" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" />
-                  <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} />
-                  <Tooltip contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} />
-                  <Area type="monotone" dataKey="latency" stroke="#3b82f6" fillOpacity={1} fill="url(#colorLatency)" strokeWidth={2} />
+              <ResponsiveContainer>
+                <AreaChart data={trend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                  <XAxis dataKey="no" stroke="var(--text-secondary)" fontSize={12} />
+                  <YAxis stroke="var(--text-secondary)" fontSize={12} />
+                  <Tooltip contentStyle={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8 }} />
+                  <Area type="monotone" dataKey="latency" stroke="#3b82f6" fill="#3b82f630" strokeWidth={2} name="延迟(ms)" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           </div>
-          <div className="card p-6 flex flex-col">
-            <h4 className="text-sm font-bold text-[var(--text-secondary)] uppercase mb-6">成功率分布</h4>
-            <div className="flex-1 min-h-[200px]">
-              <ResponsiveContainer width="100%" height="100%">
+          <div className="card p-6">
+            <h3 className="text-sm font-semibold mb-4">成功/失败</h3>
+            <div className="h-64">
+              <ResponsiveContainer>
                 <PieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {pieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
+                  <Pie data={pieData.filter(p => p.value > 0)} dataKey="value" nameKey="name" innerRadius={50} outerRadius={80}>
+                    {pieData.map((e, i) => <Cell key={i} fill={e.color} />)}
                   </Pie>
-                  <Tooltip />
-                  <Legend />
+                  <Legend /><Tooltip />
                 </PieChart>
               </ResponsiveContainer>
             </div>
           </div>
         </div>
-
-        {/* Results Table */}
-        <div className="card overflow-hidden">
-          <div className="px-6 py-4 border-b border-[var(--border-color)]">
-            <h4 className="text-sm font-bold text-[var(--text-secondary)] uppercase">测试结果明细</h4>
+        <div className="card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold">结果指标（写入结果校验库）</h3>
+            <button onClick={() => navigate('verification', 'res-list')} className="text-xs text-blue-500 hover:underline">前往结果校验对比 →</button>
           </div>
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-[var(--bg-primary)] text-[var(--text-secondary)] text-xs uppercase tracking-wider">
-                <th className="px-6 py-4 font-semibold">测试项</th>
-                <th className="px-6 py-4 font-semibold">请求结果</th>
-                <th className="px-6 py-4 font-semibold">响应时间</th>
-                <th className="px-6 py-4 font-semibold">状态</th>
-              </tr>
-            </thead>
+          <table className="w-full text-sm">
             <tbody className="divide-y divide-[var(--border-color)]">
-              {[
-                { item: '状态码校验 (200)', result: '200 OK', latency: '142ms', status: 'success' },
-                { item: '响应字段校验 ($.status)', result: 'OK', latency: '142ms', status: 'success' },
-                { item: '响应字段校验 ($.data.faces)', result: 'Array(2)', latency: '142ms', status: 'success' },
-                { item: '响应时间校验 (<500ms)', result: '142ms', latency: '142ms', status: 'success' },
-              ].map((row, i) => (
-                <tr key={i} className="hover:bg-[var(--bg-primary)] transition-colors">
-                  <td className="px-6 py-4 text-sm font-medium text-[var(--text-primary)]">{row.item}</td>
-                  <td className="px-6 py-4 text-sm text-[var(--text-secondary)] font-mono">{row.result}</td>
-                  <td className="px-6 py-4 text-sm text-[var(--text-secondary)] font-mono">{row.latency}</td>
-                  <td className="px-6 py-4">{getStatusBadge(row.status)}</td>
+              {result.items.map((item, i) => (
+                <tr key={i}>
+                  <td className="py-2.5 text-[var(--text-secondary)] w-1/3">{item.name}</td>
+                  <td className={cn("py-2.5 font-medium", item.status === 'success' ? 'text-emerald-600' : item.status === 'warning' ? 'text-orange-500' : 'text-red-500')}>
+                    {item.status === 'success' ? <CheckCircle2 className="w-4 h-4 inline mr-1.5" /> : <XCircle className="w-4 h-4 inline mr-1.5" />}{item.value}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -944,212 +386,208 @@ export default function InterfaceEvaluation({ activeSubTab }: InterfaceEvaluatio
     );
   };
 
+  /* ---------- 版本差异分析 ---------- */
   const renderVersionDiff = () => {
+    const v = selectedVersion;
     const diffData = [
-      { path: '/api/v1/user/profile', method: 'GET', type: 'modified', impact: 'low', description: '新增 optional 字段: bio' },
-      { path: '/api/v1/auth/logout', method: 'POST', type: 'added', impact: 'none', description: '新增登出接口' },
-      { path: '/api/v1/data/export', method: 'POST', type: 'deleted', impact: 'breaking', description: '接口已移除，请使用 /api/v2/export' },
-      { path: '/api/v1/face/verify', method: 'POST', type: 'modified', impact: 'breaking', description: '参数 face_id 变更为必填' },
+      { path: v?.api || '/api/v1/face/detect', method: 'POST', type: 'modified', impact: '高', desc: `${v?.base || '基准'} → 目标版本：响应结构变更` },
+      { path: (v?.api || '/api/v1/face/detect') + '/batch', method: 'POST', type: 'added', impact: '低', desc: '目标版本新增批量入口' },
+      { path: '/api/v1/legacy/match', method: 'POST', type: 'deleted', impact: '高', desc: '目标版本移除旧接口' },
     ];
-
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <button 
-            onClick={() => setView('list')}
-            className="text-sm text-blue-500 hover:text-blue-600 flex items-center"
-          >
-            <ArrowLeft className="w-4 h-4 mr-1" /> 返回列表
-          </button>
-        </div>
-
-        {/* Version Config Card */}
-        <div className="card p-6">
-          <h3 className="text-lg font-bold mb-6 flex items-center">
-            <Activity className="w-5 h-5 mr-2 text-blue-500" /> 版本对比配置
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-[var(--bg-primary)] rounded-xl border border-[var(--border-color)]">
-                <div>
-                  <p className="text-xs text-[var(--text-secondary)] mb-1">基准版本 (Base)</p>
-                  <select 
-                    value={versionDiffConfig.base}
-                    onChange={(e) => setVersionDiffConfig({...versionDiffConfig, base: e.target.value})}
-                    className="bg-transparent font-bold text-[var(--text-primary)] outline-none cursor-pointer"
-                  >
-                    <option value="v1.1.0">v1.1.0</option>
-                    <option value="v1.2.0">v1.2.0</option>
-                  </select>
-                </div>
-                <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                  <Globe className="w-5 h-5 text-slate-500" />
-                </div>
-              </div>
-            </div>
-            <div className="hidden md:flex justify-center">
-              <ChevronRight className="w-6 h-6 text-[var(--text-secondary)]" />
-            </div>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-[var(--bg-primary)] rounded-xl border border-[var(--border-color)]">
-                <div>
-                  <p className="text-xs text-[var(--text-secondary)] mb-1">对比版本 (Target)</p>
-                  <select 
-                    value={versionDiffConfig.target}
-                    onChange={(e) => setVersionDiffConfig({...versionDiffConfig, target: e.target.value})}
-                    className="bg-transparent font-bold text-[var(--text-primary)] outline-none cursor-pointer"
-                  >
-                    <option value="v1.3.0">v1.3.0</option>
-                    <option value="v1.4.0-beta">v1.4.0-beta</option>
-                  </select>
-                </div>
-                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                  <Zap className="w-5 h-5 text-blue-500" />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Interface Change Detection */}
+        <button onClick={() => setView('list')} className="flex items-center text-sm text-[var(--text-secondary)] hover:text-blue-500"><ArrowLeft className="w-4 h-4 mr-1" /> 返回列表</button>
+        <Header title={`多版本差异分析${v ? `：${v.name}` : ''}`} sub={v ? `基准 ${v.base} vs ${v.versions.filter(x => x !== v.base).join(', ')}` : ''} />
         <div className="card overflow-hidden">
           <div className="px-6 py-4 border-b border-[var(--border-color)] flex items-center justify-between">
             <h4 className="text-sm font-semibold">接口变更检测</h4>
-            <div className="flex gap-4">
-              <span className="text-xs flex items-center"><div className="w-2 h-2 rounded-full bg-blue-500 mr-1.5" /> 修改</span>
-              <span className="text-xs flex items-center"><div className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5" /> 新增</span>
-              <span className="text-xs flex items-center"><div className="w-2 h-2 rounded-full bg-red-500 mr-1.5" /> 删除</span>
+            <div className="flex gap-4 text-xs">
+              <span className="flex items-center"><span className="w-2 h-2 rounded-full bg-blue-500 mr-1.5" /> 修改</span>
+              <span className="flex items-center"><span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5" /> 新增</span>
+              <span className="flex items-center"><span className="w-2 h-2 rounded-full bg-red-500 mr-1.5" /> 删除</span>
             </div>
           </div>
           <table className="w-full text-left">
-            <thead>
-              <tr className="bg-[var(--bg-primary)] text-[var(--text-secondary)] text-xs uppercase tracking-wider">
-                <th className="px-6 py-4 font-semibold">接口路径</th>
-                <th className="px-6 py-4 font-semibold">变更类型</th>
-                <th className="px-6 py-4 font-semibold">影响程度</th>
-                <th className="px-6 py-4 font-semibold">变更描述</th>
-              </tr>
-            </thead>
+            <thead><tr className="bg-[var(--bg-primary)] text-[var(--text-secondary)] text-xs uppercase tracking-wider">
+              <th className="px-6 py-4 font-semibold">接口路径</th><th className="px-6 py-4 font-semibold">变更类型</th><th className="px-6 py-4 font-semibold">影响程度</th><th className="px-6 py-4 font-semibold">变更描述</th>
+            </tr></thead>
             <tbody className="divide-y divide-[var(--border-color)]">
               {diffData.map((item, i) => (
-                <tr key={i} className="hover:bg-[var(--bg-primary)] transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center">
-                      <span className="text-xs font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded mr-2">{item.method}</span>
-                      <span className="text-sm font-medium">{item.path}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={cn(
-                      "text-[10px] px-2 py-0.5 rounded-full font-bold uppercase",
-                      item.type === 'modified' ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" :
-                      item.type === 'added' ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" :
-                      "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                    )}>
-                      {item.type === 'modified' ? '修改' : item.type === 'added' ? '新增' : '删除'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center">
-                      <AlertCircle className={cn(
-                        "w-4 h-4 mr-1.5",
-                        item.impact === 'breaking' ? "text-red-500" :
-                        item.impact === 'low' ? "text-orange-500" : "text-slate-400"
-                      )} />
-                      <span className={cn(
-                        "text-xs font-medium",
-                        item.impact === 'breaking' ? "text-red-600" :
-                        item.impact === 'low' ? "text-orange-600" : "text-slate-600"
-                      )}>
-                        {item.impact === 'breaking' ? '破坏性变更' : item.impact === 'low' ? '低风险' : '无影响'}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">{item.description}</td>
+                <tr key={i} className="hover:bg-[var(--bg-primary)]">
+                  <td className="px-6 py-4"><div className="flex items-center"><span className="text-xs font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded mr-2">{item.method}</span><span className="text-sm font-medium">{item.path}</span></div></td>
+                  <td className="px-6 py-4"><span className={cn("text-[10px] px-2 py-0.5 rounded-full font-bold uppercase", item.type === 'modified' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : item.type === 'added' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400')}>{item.type === 'modified' ? '修改' : item.type === 'added' ? '新增' : '删除'}</span></td>
+                  <td className="px-6 py-4 text-sm">{item.impact}</td>
+                  <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">{item.desc}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-
-        {/* Compatibility Analysis Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="card p-6 border-l-4 border-red-500">
-            <h4 className="text-sm font-semibold mb-2">破坏性变更</h4>
-            <p className="text-3xl font-bold text-red-500">2</p>
-            <p className="text-xs text-[var(--text-secondary)] mt-1">需要立即更新客户端代码</p>
-          </div>
-          <div className="card p-6 border-l-4 border-orange-500">
-            <h4 className="text-sm font-semibold mb-2">向后兼容变更</h4>
-            <p className="text-3xl font-bold text-orange-500">1</p>
-            <p className="text-xs text-[var(--text-secondary)] mt-1">建议在下个版本适配</p>
-          </div>
-          <div className="card p-6 border-l-4 border-emerald-500">
-            <h4 className="text-sm font-semibold mb-2">新增功能</h4>
-            <p className="text-3xl font-bold text-emerald-500">1</p>
-            <p className="text-xs text-[var(--text-secondary)] mt-1">可供新业务使用</p>
-          </div>
-        </div>
-
-        {/* Recommendations Section */}
-        <div className="card p-6">
-          <h4 className="text-sm font-semibold mb-4 flex items-center">
-            <AlertCircle className="w-4 h-4 mr-2 text-blue-500" /> 兼容性建议
-          </h4>
-          <div className="space-y-4">
-            <div className="p-4 bg-red-50 dark:bg-red-900/10 rounded-lg border border-red-100 dark:border-red-900/20">
-              <p className="text-sm font-bold text-red-700 dark:text-red-400 mb-1">建议 1: 接口迁移</p>
-              <p className="text-xs text-red-600 dark:text-red-300/80">
-                由于 /api/v1/data/export 已被删除，建议所有客户端在 2026-06-01 前迁移至 /api/v2/export。
-                v2 接口提供了更高的性能和更多的导出格式支持。
-              </p>
+        {v?.resultId && results.find(r => r.id === v.resultId) && (
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold">最近兼容性执行结果（{v.resultId}）</h3>
+              <button onClick={() => setResultModal(results.find(r => r.id === v.resultId)!)} className="text-xs text-blue-500 hover:underline">查看明细 →</button>
             </div>
-            <div className="p-4 bg-orange-50 dark:bg-orange-900/10 rounded-lg border border-orange-100 dark:border-orange-900/20">
-              <p className="text-sm font-bold text-orange-700 dark:text-orange-400 mb-1">建议 2: 参数适配</p>
-              <p className="text-xs text-orange-600 dark:text-orange-300/80">
-                /api/v1/face/verify 的 face_id 参数现在是必填项。请检查客户端调用逻辑，确保在发送请求前已获取有效的 face_id。
-              </p>
-            </div>
-            <div className="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-100 dark:border-blue-900/20">
-              <p className="text-sm font-bold text-blue-700 dark:text-blue-400 mb-1">建议 3: 新功能试用</p>
-              <p className="text-xs text-blue-600 dark:text-blue-300/80">
-                新版本引入了 /api/v1/auth/logout 接口，建议客户端集成该接口以提升安全性，确保用户会话能被正确销毁。
-              </p>
-            </div>
+            <p className="text-sm text-[var(--text-secondary)]">兼容率 {results.find(r => r.id === v.resultId)!.successRate}% · 结论 {results.find(r => r.id === v.resultId)!.status === 'success' ? '通过' : '不通过'}</p>
           </div>
-        </div>
+        )}
       </div>
     );
+  };
+
+  const doDelete = () => {
+    if (!confirmDel) return;
+    if (confirmDel.kind === 'api') deleteApiTest('apiTests', confirmDel.id);
+    else if (confirmDel.kind === 'proto') deleteApiTest('protoTests', confirmDel.id);
+    else deleteVersionTest(confirmDel.id);
+    notify(`「${confirmDel.name}」已删除`, 'info');
+    setConfirmDel(null);
   };
 
   const renderContent = () => {
     if (view === 'config') return renderConfig();
     if (view === 'execution') return renderExecution();
-    if (view === 'reportDetail') return renderReportDetail();
+    if (view === 'reportDetail') return renderReport();
     if (view === 'versionDiff') return renderVersionDiff();
-
-    switch (activeSubTab) {
-      case 'api-compat': return renderAPITestList();
-      case 'multi-ver': return renderCompatibilityList();
-      case 'multi-proto': return renderProtocolList();
-      default: return renderAPITestList();
-    }
+    if (activeSubTab === 'multi-ver') return renderVersionList();
+    if (activeSubTab === 'multi-proto') return renderTestList('protoTests', true);
+    return renderTestList('apiTests');
   };
 
   return (
     <div className="h-full">
       <AnimatePresence mode="wait">
-        <motion.div
-          key={`${activeSubTab}-${view}`}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          transition={{ duration: 0.2 }}
-          className="h-full"
-        >
+        <motion.div key={`${activeSubTab}-${view}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }} className="h-full">
           {renderContent()}
         </motion.div>
       </AnimatePresence>
+      {versionModalOpen && <Modal title="新建版本测试" icon={<Layers className="w-5 h-5 mr-2 text-blue-500" />} onClose={() => setVersionModalOpen(false)} width="max-w-lg">
+        <VersionModal apiUrls={[...new Set([...apiTests, ...protoTests].map(a => a.url))]} onClose={() => setVersionModalOpen(false)} />
+      </Modal>}
+      {resultModal && (
+        <Modal title={`兼容性结果 ${resultModal.id}`} icon={<BarChart3 className="w-5 h-5 mr-2 text-blue-500" />} onClose={() => setResultModal(null)}>
+          <div className="p-6">
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="p-3 bg-[var(--bg-primary)] rounded-lg text-center"><p className={cn("text-xl font-bold", resultModal.status === 'success' ? 'text-emerald-500' : 'text-red-500')}>{resultModal.status === 'success' ? '通过' : '不通过'}</p><p className="text-[10px] text-[var(--text-secondary)]">结论</p></div>
+              <div className="p-3 bg-[var(--bg-primary)] rounded-lg text-center"><p className="text-xl font-bold text-blue-500">{resultModal.successRate}%</p><p className="text-[10px] text-[var(--text-secondary)]">向后兼容率</p></div>
+              <div className="p-3 bg-[var(--bg-primary)] rounded-lg text-center"><p className="text-xl font-bold">{resultModal.generationTime.slice(5, 16)}</p><p className="text-[10px] text-[var(--text-secondary)]">生成时间</p></div>
+            </div>
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-[var(--border-color)]">
+                {resultModal.items.map((item, i) => (
+                  <tr key={i}><td className="py-2.5 text-[var(--text-secondary)]">{item.name}</td>
+                    <td className={cn("py-2.5 font-medium text-right", item.status === 'success' ? 'text-emerald-600' : item.status === 'warning' ? 'text-orange-500' : 'text-red-500')}>{item.value}</td></tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="flex justify-end mt-4">
+              <button onClick={() => { setResultModal(null); navigate('verification', 'res-list'); }} className="text-sm text-blue-500 hover:underline">在结果校验中查看 →</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      <Confirm open={!!confirmDel} message={confirmDel ? `确定删除「${confirmDel.name}」吗？` : ''} onConfirm={doDelete} onCancel={() => setConfirmDel(null)} />
     </div>
   );
 }
+
+/* ================= 顶层表单组件（避免执行引擎 tick 触发重挂载丢失输入） ================= */
+const ApiConfigForm = ({ initial, defaultList, onSave, onCancel }: { initial?: ApiTest; defaultList: ListKey; onSave: (t: ApiTest) => void; onCancel: () => void }) => {
+  const [f, setF] = useState<ApiTest>(initial || {
+    id: uid(defaultList === 'apiTests' ? 'API' : 'PRT'), name: '', url: '', method: 'POST', protocol: 'HTTP', version: 'v1.3.0',
+    status: 'none', progress: 0, expectedCode: 200, latencyLimit: 500, timeout: 30, repeat: 5, body: DEFAULT_API_BODY,
+    createTime: fmtNow(), attempts: [], failRate: rnd(0.05, 0.25),
+  });
+  const [err, setErr] = useState('');
+  const set = (k: keyof ApiTest, v: any) => setF(prev => ({ ...prev, [k]: v }));
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!f.name.trim() || !f.url.trim()) { setErr('请填写测试名称与请求地址'); return; }
+    try { JSON.parse(f.body); } catch { setErr('请求体必须是合法 JSON'); return; }
+    onSave({ ...f, name: f.name.trim(), url: f.url.trim() });
+  };
+  const inputCls = "w-full px-4 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20";
+  return (
+    <form onSubmit={submit} className="card p-6 space-y-5 max-w-3xl">
+      {err && <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 text-sm flex items-center"><XCircle className="w-4 h-4 mr-2" />{err}</div>}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2"><label className="text-sm font-medium">测试名称 *</label><input value={f.name} onChange={e => set('name', e.target.value)} placeholder="如：人员聚集检测接口测试" className={inputCls} /></div>
+        <div className="space-y-2"><label className="text-sm font-medium">目标版本</label>
+          <select value={f.version} onChange={e => set('version', e.target.value)} className={inputCls}>{['v1.0.0', 'v1.1.0', 'v1.2.0', 'v1.3.0'].map(v => <option key={v}>{v}</option>)}</select>
+        </div>
+      </div>
+      <div className="grid grid-cols-4 gap-4">
+        <div className="space-y-2"><label className="text-sm font-medium">协议</label>
+          <select value={f.protocol} onChange={e => set('protocol', e.target.value)} className={inputCls}><option>HTTP</option><option>WS</option><option>gRPC</option></select>
+        </div>
+        <div className="space-y-2"><label className="text-sm font-medium">方法</label>
+          <select value={f.method} onChange={e => set('method', e.target.value)} className={inputCls}><option>GET</option><option>POST</option><option>PUT</option><option>WS</option><option>gRPC</option></select>
+        </div>
+        <div className="space-y-2 col-span-2"><label className="text-sm font-medium">请求地址 *</label><input value={f.url} onChange={e => set('url', e.target.value)} placeholder="/api/v1/xxx 或 wss://..." className={inputCls} /></div>
+      </div>
+      <div className="grid grid-cols-4 gap-4">
+        <div className="space-y-2"><label className="text-sm font-medium">期望状态码</label><input type="number" value={f.expectedCode} onChange={e => set('expectedCode', +e.target.value)} className={inputCls} /></div>
+        <div className="space-y-2"><label className="text-sm font-medium">延迟阈值(ms)</label><input type="number" value={f.latencyLimit} onChange={e => set('latencyLimit', +e.target.value)} className={inputCls} /></div>
+        <div className="space-y-2"><label className="text-sm font-medium">超时(s)</label><input type="number" value={f.timeout} onChange={e => set('timeout', +e.target.value)} className={inputCls} /></div>
+        <div className="space-y-2"><label className="text-sm font-medium">重复次数</label><input type="number" min={1} max={20} value={f.repeat} onChange={e => set('repeat', Math.min(20, Math.max(1, +e.target.value)))} className={inputCls} /></div>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium">请求体（JSON）</label>
+        <textarea value={f.body} onChange={e => set('body', e.target.value)} rows={5} className="w-full px-4 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+        <p className="text-[10px] text-[var(--text-secondary)]">提示：调大「重复次数」可观察更平滑的成功率统计；执行时引擎按协议逐次发起并判定。</p>
+      </div>
+      <div className="flex justify-end gap-3">
+        <button type="button" onClick={onCancel} className="px-4 py-2 border border-[var(--border-color)] rounded-lg text-sm hover:bg-[var(--bg-primary)]">取消</button>
+        <button type="submit" className="flex items-center px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save className="w-4 h-4 mr-2" /> 保存配置</button>
+      </div>
+    </form>
+  );
+};
+
+const ALL_VERSIONS = ['v1.0.0', 'v1.1.0', 'v1.2.0', 'v1.3.0'];
+const VersionModal = ({ apiUrls, onClose }: { apiUrls: string[]; onClose: () => void }) => {
+  const { addVersionTest, notify } = useStore();
+  const [name, setName] = useState('');
+  const [api, setApi] = useState(apiUrls[0] || '/api/v1/face/detect');
+  const [base, setBase] = useState('v1.2.0');
+  const [vers, setVers] = useState<string[]>(['v1.1.0', 'v1.2.0', 'v1.3.0']);
+  const [err, setErr] = useState('');
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) { setErr('请输入测试名称'); return; }
+    if (vers.length < 2) { setErr('至少选择 2 个版本'); return; }
+    if (!vers.includes(base)) { setErr('基准版本必须包含在所选版本中'); return; }
+    addVersionTest({ name: name.trim(), api, base, versions: vers });
+    notify('版本测试已创建，点击 ▶ 开始执行');
+    onClose();
+  };
+  const inputCls = "w-full px-4 py-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20";
+  return (
+    <form onSubmit={submit} className="p-6 space-y-4">
+      {err && <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 text-sm flex items-center"><XCircle className="w-4 h-4 mr-2" />{err}</div>}
+      <div className="space-y-2"><label className="text-sm font-medium">测试名称 *</label><input value={name} onChange={e => setName(e.target.value)} placeholder="如：人脸比对接口跨版本回归" className={inputCls} /></div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2"><label className="text-sm font-medium">目标接口</label>
+          <select value={api} onChange={e => setApi(e.target.value)} className={inputCls}>{apiUrls.map(u => <option key={u}>{u}</option>)}</select>
+        </div>
+        <div className="space-y-2"><label className="text-sm font-medium">基准版本</label>
+          <select value={base} onChange={e => setBase(e.target.value)} className={inputCls}>{ALL_VERSIONS.map(v => <option key={v}>{v}</option>)}</select>
+        </div>
+      </div>
+      <div>
+        <label className="text-sm font-medium block mb-2">参与版本 *</label>
+        <div className="grid grid-cols-4 gap-2">
+          {ALL_VERSIONS.map(v => (
+            <label key={v} className={cn("flex items-center justify-center px-2 py-2 border rounded-lg text-xs font-mono cursor-pointer", vers.includes(v) ? 'border-blue-500 bg-blue-50/60 dark:bg-blue-900/10 text-blue-600' : 'border-[var(--border-color)]')}>
+              <input type="checkbox" className="hidden" checked={vers.includes(v)} onChange={e => setVers(prev => e.target.checked ? [...prev, v] : prev.filter(x => x !== v))} />{v}
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="flex justify-end pt-2">
+        <button type="submit" className="flex items-center px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Send className="w-4 h-4 mr-2" /> 创建测试</button>
+      </div>
+    </form>
+  );
+};
